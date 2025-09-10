@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Drop‑to‑Read PDF (Dark Mode) — v1.4 (fit height fix)</title>
+  <style>
+    :root{
+      --bg: #0b0f14; /* dark */
+      --panel: #11161d;
+      --text: #e6edf3;
+      --muted: #94a3b8;
+      --accent: #60a5fa;
+      --border: #1f2937;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+      color: var(--text);
+      background: var(--bg);
+      display:flex; flex-direction:column;
+    }
+    .toolbar{ display:flex; gap:.5rem; align-items:center; padding:.75rem 1rem; border-bottom:1px solid var(--border); background: var(--panel); position:sticky; top:0; z-index:10; }
+    .toolbar button, .toolbar label, .toolbar input[type="number"]{
+      border:1px solid var(--border); background:#0f172a; color:var(--text); padding:.5rem .7rem; border-radius:.6rem; font-size:.95rem;
+    }
+    .toolbar button:hover, .toolbar label:hover{border-color:#334155}
+    .toolbar .sep{width:1px; height:28px; background:var(--border); margin:0 .25rem}
+    .toolbar .grow{flex:1}
+    .hint{color:var(--muted); font-size:.9rem}
+
+    .stage{ display:flex; align-items:center; justify-content:center; padding:1rem; overflow:auto; flex:1; }
+    .viewer{ display:flex; align-items:center; justify-content:center; max-height:100%; }
+    canvas{ background:#111827; border-radius:.75rem; box-shadow: 0 10px 30px rgba(0,0,0,.35); width:auto; height:auto; max-height:100%; }
+
+    /* Dark reading filter */
+    .invert canvas{ filter: invert(1) hue-rotate(180deg) contrast(0.93) brightness(0.95); }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <label for="file">📄 Open<input id="file" type="file" accept="application/pdf" hidden></label>
+    <button id="prev">◀︎</button>
+    <div class="hint">Page</div>
+    <input id="page" type="number" min="1" value="1" style="width:4.5rem">
+    <div class="hint">of <span id="total">—</span></div>
+    <button id="next">▶︎</button>
+    <div class="sep"></div>
+    <button id="zoomOut">−</button>
+    <div class="hint" id="zoomLabel">100%</div>
+    <button id="zoomIn">＋</button>
+    <button id="fitWidth">Fit W</button>
+    <button id="fitHeight">Fit H</button>
+    <div class="sep"></div>
+    <button id="darkToggle">🌙 Dark on</button>
+    <div class="grow"></div>
+  </div>
+
+  <div class="stage" id="stage">
+    <div id="drop" class="dropzone">
+      <div>
+        <div style="font-size:3rem">⬇️</div>
+        <h2>Drop your PDF here</h2>
+        <p class="hint">or click “Open” above</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+    const fileInput=document.getElementById('file');
+    const prevBtn=document.getElementById('prev');
+    const nextBtn=document.getElementById('next');
+    const pageInput=document.getElementById('page');
+    const totalSpan=document.getElementById('total');
+    const zoomIn=document.getElementById('zoomIn');
+    const zoomOut=document.getElementById('zoomOut');
+    const zoomLabel=document.getElementById('zoomLabel');
+    const fitWidth=document.getElementById('fitWidth');
+    const fitHeight=document.getElementById('fitHeight');
+    const stage=document.getElementById('stage');
+    const darkToggle=document.getElementById('darkToggle');
+
+    let pdfDoc=null; let currentPage=1; let scale=1.1; let rendering=false; let pendingPage=null; let darkOn=true;
+
+    const viewer=document.createElement('div'); viewer.className='viewer invert';
+    const canvas=document.createElement('canvas'); const ctx=canvas.getContext('2d',{alpha:false}); viewer.appendChild(canvas);
+
+    function setDarkMode(on){ viewer.classList.toggle('invert',on); darkToggle.textContent=on?'🌙 Dark on':'☀️ Dark off'; }
+    function setZoomLabel(){ zoomLabel.textContent=Math.round(scale*100)+'%'; }
+    function openViewer(){ if(!stage.contains(viewer)){ stage.innerHTML=''; stage.appendChild(viewer);} }
+
+    setDarkMode(true); setZoomLabel();
+
+    async function renderPage(num){
+      if(!pdfDoc) return; rendering=true;
+      const page=await pdfDoc.getPage(num);
+      const viewport=page.getViewport({scale});
+      canvas.width=Math.floor(viewport.width); canvas.height=Math.floor(viewport.height);
+      openViewer();
+      await page.render({canvasContext:ctx,viewport}).promise;
+      rendering=false; if(pendingPage!==null){const n=pendingPage; pendingPage=null; renderPage(n);} }
+
+    function queueRender(num){ if(rendering){pendingPage=num;} else {renderPage(num);} }
+    function showPage(num){ if(!pdfDoc)return; currentPage=Math.min(Math.max(1,num),pdfDoc.numPages); pageInput.value=currentPage; queueRender(currentPage);} 
+
+    async function loadArrayBuffer(arr){ const loadingTask=pdfjsLib.getDocument({data:arr}); pdfDoc=await loadingTask.promise; totalSpan.textContent=pdfDoc.numPages; currentPage=1; pageInput.value=1; openViewer(); renderPage(1);} 
+    async function loadFile(file){ if(!file) return; const arr=await file.arrayBuffer(); await loadArrayBuffer(arr);} 
+
+    prevBtn.onclick=()=>showPage(currentPage-1); nextBtn.onclick=()=>showPage(currentPage+1); pageInput.onchange=()=>showPage(parseInt(pageInput.value||'1',10));
+    zoomIn.onclick=()=>{scale=Math.min(5,scale*1.15);setZoomLabel();queueRender(currentPage);};
+    zoomOut.onclick=()=>{scale=Math.max(0.25,scale/1.15);setZoomLabel();queueRender(currentPage);};
+    fitWidth.onclick=()=>{ if(!pdfDoc) return; const w=stage.clientWidth-24; pdfDoc.getPage(currentPage).then(p=>{const base=p.getViewport({scale:1}); scale=Math.max(0.25,Math.min(5,w/base.width)); setZoomLabel(); queueRender(currentPage);}); };
+    fitHeight.onclick=()=>{ if(!pdfDoc) return; const h=stage.clientHeight-24; pdfDoc.getPage(currentPage).then(p=>{const base=p.getViewport({scale:1}); scale=Math.max(0.25,Math.min(5,h/base.height)); setZoomLabel(); queueRender(currentPage);}); };
+    darkToggle.onclick=()=>{darkOn=!darkOn; setDarkMode(darkOn);};
+
+    fileInput.onchange=(e)=>{const f=e.target.files&&e.target.files[0]; if(f) loadFile(f);};
+    document.addEventListener('dragover',(e)=>{e.preventDefault();});
+    document.addEventListener('drop',(e)=>{e.preventDefault(); const f=e.dataTransfer.files&&e.dataTransfer.files[0]; if(f&&f.type==='application/pdf') loadFile(f);});
+  </script>
+</body>
+</html>
